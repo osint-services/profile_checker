@@ -2,6 +2,7 @@
 Profile Validation Service
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from pathlib import Path
@@ -124,56 +125,70 @@ async def search_for_username(username: str) -> list[SiteResult]:
     the existence of the profile. The function handles various exceptions that may occur during
     HTTP requests and logs relevant information throughout the process.
     """
-    sites_found: list[SiteResult] = []
     sites = get_site_list(username)
-    for site_data in sites:
+    semaphore = asyncio.Semaphore(8)
+
+    async def run_site(site_data: SiteData):
         validation_uri = site_data.validation_uri
-        try:
-            response = await client.head(validation_uri, follow_redirects=True)
+        async with semaphore:
+            try:
+                response = await client.head(validation_uri, follow_redirects=True)
 
-            if response.status_code == HTTPStatus.OK:
-                is_profile = await confirm_profile_exists(
-                    validation_uri, username, site_data.title
-                )
-                if not is_profile:
-                    logger.debug(
-                        f"Head-only match rejected for '{username}' on {validation_uri}"
+                if response.status_code == HTTPStatus.OK:
+                    is_profile = await confirm_profile_exists(
+                        validation_uri, username, site_data.title
                     )
-                    continue
+                    if not is_profile:
+                        logger.debug(
+                            f"Head-only match rejected for '{username}' on {validation_uri}"
+                        )
+                        return None
 
-                site_result = SiteResult(
-                    title=site_data.title,
-                    profile_uri=site_data.profile_uri,
-                    validation_uri=site_data.validation_uri,
-                    is_valid_profile=is_profile,
+                    site_result = SiteResult(
+                        title=site_data.title,
+                        profile_uri=site_data.profile_uri,
+                        validation_uri=site_data.validation_uri,
+                        is_valid_profile=is_profile,
+                    )
+                    logger.debug(f"Username '{username}' found on site: {validation_uri}")
+                    return site_result
+
+                logger.debug(
+                    f"No match for '{username}' on site: {validation_uri} (status={response.status_code})"
                 )
-                sites_found.append(site_result)
-                logger.debug(f"Username '{username}' found on site: {validation_uri}")
-            else:
-                logger.debug(f"No match for '{username}' on site: {validation_uri} \
-                        (status={response.status_code})")
-        except (
-            httpx.ReadTimeout,
-            httpx.ConnectError,
-            httpx.ConnectTimeout,
-            httpx.ReadError,
-            httpx.TooManyRedirects,
-            ValueError,
-            SSLError,
-        ) as e:
-            logger.warning(
-                f"Request failed for '{username}' on site '{validation_uri}': {e}"
-            )
-            continue
-        except Exception as e:
-            logger.exception(f"Unexpected error while searching for username \
-                             '{username}' on site '{validation_uri}'")
-            raise e
+                return None
+            except (
+                httpx.ReadTimeout,
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.ReadError,
+                httpx.TooManyRedirects,
+                ValueError,
+                SSLError,
+            ) as e:
+                logger.warning(
+                    f"Request failed for '{username}' on site '{validation_uri}': {e}"
+                )
+                return None
+            except Exception as e:
+                logger.exception(
+                    f"Unexpected error while searching for username '{username}' on site '{validation_uri}'"
+                )
+                raise e
+
+    results = await asyncio.gather(*(run_site(site_data) for site_data in sites))
+    sites_found = [result for result in results if result is not None]
 
     logger.info(
         f"Finished background search for username '{username}'. Found {len(sites_found)} matches."
     )
     return sites_found
+
+
+@app.get("/healthz")
+async def healthz():
+    """Simple liveness endpoint used by Docker health checks and smoke tests."""
+    return {"status": "ok"}
 
 
 @app.get("/scan/{username}")
