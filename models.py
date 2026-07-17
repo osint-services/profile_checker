@@ -24,3 +24,7 @@ class SiteData(BaseModel):
 
 class SiteResult(SiteData):
     is_valid_profile: bool = Field(..., description="True when the profile exists")
+    validation: XValidationResponse | None = Field(
+        default=None,
+        description="Public validation evidence returned by the platform endpoint",
+    )

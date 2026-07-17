@@ -67,7 +67,9 @@ def get_site_list(username: str) -> list[SiteData]:
     ]
 
 
-async def confirm_profile_exists(url: str, username: str, title: str) -> bool:
+async def confirm_profile_exists(
+    url: str, username: str, title: str
+) -> tuple[bool, XValidationResponse | None]:
     """
     For some sites, a HEAD request may return 200 OK for both existing and non-existing profiles.
     In such cases, we need to perform a GET request to confirm the existence of the profile.
@@ -86,18 +88,18 @@ async def confirm_profile_exists(url: str, username: str, title: str) -> bool:
         SSLError,
     ) as e:
         logger.warning(f"Profile validation failed for '{username}' at '{url}': {e}")
-        return False
+        return False, None
     except Exception as e:
         logger.exception(
             f"Unexpected error during profile validation for '{username}' at '{url}': {e}"
         )
-        return False
+        return False, None
 
     if response.status_code != HTTPStatus.OK:
         logger.debug(
             f"Profile validation GET returned {response.status_code} for {url}"
         )
-        return False
+        return False, None
 
     logger.info(
         f"Checking profile existence for '{username}' on {url} with title '{title}'"
@@ -111,12 +113,16 @@ async def confirm_profile_exists(url: str, username: str, title: str) -> bool:
             logger.warning(
                 f"Invalid validation response for '{username}' on '{url}': {e}"
             )
-            return False
+            return False, None
 
         # if username is not available because it's taken then profile exists
-        return not validation.valid and validation.reason == XUsernameAvailabilityReason.taken
+        return (
+            not validation.valid
+            and validation.reason == XUsernameAvailabilityReason.taken,
+            validation,
+        )
 
-    return False
+    return False, None
 
 async def search_for_username(username: str) -> list[SiteResult]:
     """
@@ -135,7 +141,7 @@ async def search_for_username(username: str) -> list[SiteResult]:
                 response = await client.head(validation_uri, follow_redirects=True)
 
                 if response.status_code == HTTPStatus.OK:
-                    is_profile = await confirm_profile_exists(
+                    is_profile, validation = await confirm_profile_exists(
                         validation_uri, username, site_data.title
                     )
                     if not is_profile:
@@ -149,6 +155,7 @@ async def search_for_username(username: str) -> list[SiteResult]:
                         profile_uri=site_data.profile_uri,
                         validation_uri=site_data.validation_uri,
                         is_valid_profile=is_profile,
+                        validation=validation,
                     )
                     logger.debug(f"Username '{username}' found on site: {validation_uri}")
                     return site_result
