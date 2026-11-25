@@ -3,7 +3,7 @@
 Profile validation microservice called `profile-checker` that checks whether usernames exist on social media platforms. The service validates profiles by performing HTTP requests to platform-specific endpoints and confirms existence through response validation.
 
 ## Requirements
-- Python 3.9 or higher
+- Python 3.11 or newer
 
 ### Tech Stack
 - The REST API framework being used is [FastAPI](https://fastapi.tiangolo.com/)
@@ -24,19 +24,28 @@ Profile validation microservice called `profile-checker` that checks whether use
 - Site verification templates are stored in `sites.yaml`.
 
 ### Endpoints
+- GET `/healthz` returns the service liveness status.
 - GET `/scan/{username}`
     * Validates whether the given username exists on supported platforms.
     * Returns `200 OK` with results containing found profiles.
     * Performs HEAD requests to platform validation endpoints and follows up with GET requests to confirm profile existence.
 
 ### Example response for `/scan/{username}`
+
+The `validation` object preserves the upstream X username-availability evidence. This example uses synthetic values.
 ```json
 [
   {
     "title": "X",
     "profile_uri": "https://x.com/osint-services",
     "validation_uri": "https://api.x.com/i/users/username_available.json?username=osint-services",
-    "is_valid_profile": true
+    "is_valid_profile": true,
+    "validation": {
+      "valid": false,
+      "reason": "taken",
+      "msg": "Username is taken",
+      "desc": "The username is already in use"
+    }
   }
 ]
 ```
